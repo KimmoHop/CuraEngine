@@ -1,4 +1,4 @@
-//Copyright (c) 2019 Ultimaker B.V.
+//Copyright (c) 2021 Ultimaker B.V.
 //CuraEngine is released under the terms of the AGPLv3 or higher.
 
 #include "Application.h" //To get settings.
@@ -8,7 +8,7 @@
 #include "TreeSupport.h"
 #include "progress/Progress.h"
 #include "settings/EnumSettings.h"
-#include "settings/types/AngleRadians.h" //Creating the correct branch angles.
+#include "settings/types/Angle.h" //Creating the correct branch angles.
 #include "settings/types/Ratio.h"
 #include "utils/IntPoint.h" //To normalize vectors.
 #include "utils/logoutput.h"
@@ -49,10 +49,10 @@ void TreeSupport::generateSupportAreas(SliceDataStorage& storage)
         group_settings.get<bool>("support_enable")&&
         group_settings.get<ESupportStructure>("support_structure") == ESupportStructure::TREE;
 
-    if (!(global_use_tree_support || 
+    if (!(global_use_tree_support ||
           std::any_of(storage.meshes.cbegin(),
                       storage.meshes.cend(),
-                      [](const SliceMeshStorage& m) { 
+                      [](const SliceMeshStorage& m) {
                           return m.settings.get<bool>("support_enable") &&
                                  m.settings.get<ESupportStructure>("support_structure") == ESupportStructure::TREE;
                       })))
@@ -176,7 +176,7 @@ void TreeSupport::drawCircles(SliceDataStorage& storage, const std::vector<std::
                 constexpr bool no_prime_tower = false;
                 floor_layer.add(support_layer.intersection(storage.getLayerOutlines(sample_layer, no_support, no_prime_tower)));
             }
-            floor_layer.unionPolygons();
+            floor_layer = floor_layer.unionPolygons();
             support_layer = support_layer.difference(floor_layer.offset(10)); //Subtract the support floor from the normal support.
         }
 
@@ -284,7 +284,7 @@ void TreeSupport::dropNodes(std::vector<std::vector<Node*>>& contact_nodes)
         for (const std::unordered_map<Point, Node*>& group : nodes_per_part)
         {
             std::vector<Point> points_to_buildplate;
-            for (const std::pair<Point, Node*>& entry : group)
+            for (const std::pair<const Point, Node*>& entry : group)
             {
                 points_to_buildplate.emplace_back(entry.first); //Just the position of the node.
             }
@@ -296,7 +296,7 @@ void TreeSupport::dropNodes(std::vector<std::vector<Node*>>& contact_nodes)
             const MinimumSpanningTree& mst = spanning_trees[group_index];
             //In the first pass, merge all nodes that are close together.
             std::unordered_set<Node*> to_delete;
-            for (const std::pair<Point, Node*>& entry : nodes_per_part[group_index])
+            for (const std::pair<const Point, Node*>& entry : nodes_per_part[group_index])
             {
                 Node* p_node = entry.second;
                 Node& node = *p_node;
@@ -359,7 +359,7 @@ void TreeSupport::dropNodes(std::vector<std::vector<Node*>>& contact_nodes)
                 }
             }
             //In the second pass, move all middle nodes.
-            for (const std::pair<Point, Node*>& entry : nodes_per_part[group_index])
+            for (const std::pair<const Point, Node*>& entry : nodes_per_part[group_index])
             {
                 Node* p_node = entry.second;
                 const Node& node = *p_node;
@@ -418,7 +418,7 @@ void TreeSupport::dropNodes(std::vector<std::vector<Node*>>& contact_nodes)
                         return branch_radius + branch_radius * (node.distance_to_top + 1) * diameter_angle_scale_factor;
                     }
                     else
-                    { 
+                    {
                         return branch_radius * (node.distance_to_top + 1) / tip_layers;
                     }
                 }();
@@ -448,7 +448,7 @@ void TreeSupport::dropNodes(std::vector<std::vector<Node*>>& contact_nodes)
                     to_free_node_set.insert(*to_erase);
                     contact_nodes[i_layer].erase(to_erase);
                     to_free_node_set.insert(i_node);
-                    
+
                     for (Node* neighbour : i_node->merged_neighbours)
                     {
                         unsupported_branch_leaves.push_front({ i_layer, neighbour });
@@ -730,7 +730,7 @@ const Polygons& ModelVolumes::calculateInternalModel(const RadiusLayerPair& key)
 Polygons ModelVolumes::calculateMachineBorderCollision(Polygon machine_border)
 {
     Polygons machine_volume_border;
-    machine_volume_border.add(machine_border.offset(1000000)); //Put a border of 1m around the print volume so that we don't collide.
+    machine_volume_border.add(machine_border.offset(MM2INT(1000))); //Put a border of 1m around the print volume so that we don't collide.
     machine_border.reverse(); //Makes the polygon negative so that we subtract the actual volume from the collision area.
     machine_volume_border.add(machine_border);
     return machine_volume_border;

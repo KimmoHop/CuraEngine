@@ -1,4 +1,4 @@
-//Copyright (c) 2019 Ultimaker B.V.
+//Copyright (c) 2021 Ultimaker B.V.
 //CuraEngine is released under the terms of the AGPLv3 or higher.
 
 #include <cmath> // sqrt, round
@@ -21,7 +21,7 @@
 #include "infill/UniformDensityProvider.h"
 #include "progress/Progress.h"
 #include "settings/EnumSettings.h" //For EFillMethod.
-#include "settings/types/AngleRadians.h" //To compute overhang distance from the angle.
+#include "settings/types/Angle.h" //To compute overhang distance from the angle.
 #include "settings/types/Ratio.h"
 #include "utils/logoutput.h"
 #include "utils/math.h"
@@ -126,13 +126,16 @@ void AreaSupport::generateSupportInfillFeatures(SliceDataStorage& storage)
 
 void AreaSupport::prepareInsetsAndInfillAreasForForSupportInfillParts(SliceDataStorage& storage)
 {
+    coord_t max_resolution = Application::getInstance().current_slice->scene.settings.get<ExtruderTrain&>("support_infill_extruder_nr").settings.get<coord_t>("meshfix_maximum_resolution");
+    coord_t max_deviation = Application::getInstance().current_slice->scene.settings.get<ExtruderTrain&>("support_infill_extruder_nr").settings.get<coord_t>("meshfix_maximum_deviation");
+
     // at this stage, the outlines are final, and we can generate insets and infill area
     for (SupportLayer& support_layer : storage.support.supportLayers)
     {
         for (std::vector<SupportInfillPart>::iterator part_itr = support_layer.support_infill_parts.begin(); part_itr != support_layer.support_infill_parts.end();)
         {
             SupportInfillPart& part = *part_itr;
-            const bool is_not_empty_part = part.generateInsetsAndInfillAreas();
+            const bool is_not_empty_part = part.generateInsetsAndInfillAreas(max_resolution, max_deviation);
             if (!is_not_empty_part)
             {
                 part_itr = support_layer.support_infill_parts.erase(part_itr);
@@ -407,7 +410,7 @@ void AreaSupport::combineSupportInfillLayers(SliceDataStorage& storage)
 }
 
 
-void AreaSupport::generateOutlineInsets(std::vector<Polygons>& insets, Polygons& outline, const unsigned int inset_count, const coord_t wall_line_width_x)
+void AreaSupport::generateOutlineInsets(std::vector<Polygons>& insets, Polygons& outline, const unsigned int inset_count, const coord_t wall_line_width_x, const coord_t max_resolution, const coord_t max_deviation)
 {
     for (unsigned int inset_idx = 0; inset_idx < inset_count; inset_idx++)
     {
@@ -422,7 +425,7 @@ void AreaSupport::generateOutlineInsets(std::vector<Polygons>& insets, Polygons&
         }
 
         // optimize polygons: remove unnecessary verts
-        insets[inset_idx].simplify();
+        insets[inset_idx].simplify(max_resolution, max_deviation);
         if (insets[inset_idx].size() < 1)
         {
             insets.pop_back();
@@ -735,7 +738,7 @@ void AreaSupport::precomputeCrossInfillTree(SliceDataStorage& storage)
     const Settings& mesh_group_settings = Application::getInstance().current_slice->scene.current_mesh_group->settings;
     const ExtruderTrain& infill_extruder = mesh_group_settings.get<ExtruderTrain&>("support_infill_extruder_nr");
     const EFillMethod& support_pattern = infill_extruder.settings.get<EFillMethod>("support_pattern");
-    if (support_pattern == EFillMethod::CROSS || support_pattern == EFillMethod::CROSS_3D)
+    if((support_pattern == EFillMethod::CROSS || support_pattern == EFillMethod::CROSS_3D) && infill_extruder.settings.get<coord_t>("support_line_distance") > 0)
     {
         AABB3D aabb;
         for (unsigned int mesh_idx = 0; mesh_idx < storage.meshes.size(); mesh_idx++)
@@ -884,7 +887,7 @@ void AreaSupport::generateSupportAreasForMesh(SliceDataStorage& storage, const S
 
     // OpenMP compatibility fix for GCC <= 8 and GCC >= 9
     // See https://www.gnu.org/software/gcc/gcc-9/porting_to.html, section "OpenMP data sharing"
-#if defined(__GNUC__) && __GNUC__ <= 8
+#if defined(__GNUC__) && __GNUC__ <= 8 && !defined(__clang__)
     #pragma omp parallel for default(none) shared(xy_disallowed_per_layer, sloped_areas_per_layer, storage, mesh) schedule(dynamic)
 #else
     #pragma omp parallel for default(none) \
@@ -1009,7 +1012,7 @@ void AreaSupport::generateSupportAreasForMesh(SliceDataStorage& storage, const S
 
         // OpenMP compatibility fix for GCC <= 8 and GCC >= 9
         // See https://www.gnu.org/software/gcc/gcc-9/porting_to.html, section "OpenMP data sharing"
-#if defined(__GNUC__) && __GNUC__ <= 8
+#if defined(__GNUC__) && __GNUC__ <= 8 && !defined(__clang__)
 #pragma omp parallel for default(none) shared(sloped_areas_per_layer) schedule(dynamic)
 #else
 #pragma omp parallel for default(none) shared(sloped_areas_per_layer, layer_count, bottom_stair_step_layer_count) schedule(dynamic)
@@ -1050,12 +1053,13 @@ void AreaSupport::generateSupportAreasForMesh(SliceDataStorage& storage, const S
         { // join with support from layer up
             const Polygons empty;
             const Polygons* layer_above = (layer_idx < support_areas.size()) ? &support_areas[layer_idx + 1] : &empty;
+            const Polygons model_mesh_on_layer = (layer_idx > 0) && !is_support_mesh_nondrop_place_holder ? storage.getLayerOutlines(layer_idx, no_support, no_prime_tower) : empty;
             if (is_support_mesh_nondrop_place_holder)
             {
                 layer_above = &empty;
                 layer_this = layer_this.unionPolygons(storage.support.supportLayers[layer_idx].support_mesh);
             }
-            layer_this = AreaSupport::join(storage, *layer_above, layer_this, smoothing_distance);
+            layer_this = AreaSupport::join(storage, *layer_above, layer_this, smoothing_distance).difference(model_mesh_on_layer);
         }
 
         // make towers for small support
@@ -1169,7 +1173,7 @@ void AreaSupport::generateSupportAreasForMesh(SliceDataStorage& storage, const S
 
     // OpenMP compatibility fix for GCC <= 8 and GCC >= 9
     // See https://www.gnu.org/software/gcc/gcc-9/porting_to.html, section "OpenMP data sharing"
-#if defined(__GNUC__) && __GNUC__ <= 8
+#if defined(__GNUC__) && __GNUC__ <= 8 && !defined(__clang__)
     #pragma omp parallel for default(none) shared(support_areas, storage) schedule(dynamic)
 #else
     #pragma omp parallel for default(none) shared(support_areas, storage, max_checking_layer_idx, layer_z_distance_top) schedule(dynamic)
@@ -1327,7 +1331,7 @@ std::pair<Polygons, Polygons> AreaSupport::computeBasicAndFullOverhang(const Sli
 //     Polygons overhang =  basic_overhang.unionPolygons(support_extension);
 //         presumably the computation above is slower than the one below
 
-    Polygons overhang_extented = basic_overhang.offset(max_dist_from_lower_layer + 100); // +100 for easier joining with support from layer above
+    Polygons overhang_extented = basic_overhang.offset(max_dist_from_lower_layer + MM2INT(0.1)); // +0.1mm for easier joining with support from layer above
     Polygons full_overhang = overhang_extented.intersection(supportLayer_supportee);
     return std::make_pair(basic_overhang, full_overhang);
 }
