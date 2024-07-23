@@ -1,20 +1,22 @@
-//Copyright (c) 2018 Ultimaker B.V.
-//CuraEngine is released under the terms of the AGPLv3 or higher.
+// Copyright (c) 2022 Ultimaker B.V.
+// CuraEngine is released under the terms of the AGPLv3 or higher
+
+#include "Preheat.h"
+
+#include <spdlog/spdlog.h>
 
 #include "Application.h" //To get settings.
 #include "ExtruderTrain.h"
-#include "Preheat.h"
 #include "Slice.h"
 #include "settings/FlowTempGraph.h"
 #include "settings/types/Ratio.h"
-#include "utils/logoutput.h"
 
-namespace cura 
+namespace cura
 {
 
 Duration Preheat::getTimeToGoFromTempToTemp(const size_t extruder, const Temperature& temp_before, const Temperature& temp_after, const bool during_printing)
 {
-    const Settings& extruder_settings = Application::getInstance().current_slice->scene.extruders[extruder].settings;
+    const Settings& extruder_settings = Application::getInstance().current_slice_->scene.extruders[extruder].settings_;
     Duration time;
     if (temp_after > temp_before)
     {
@@ -37,20 +39,20 @@ Duration Preheat::getTimeToGoFromTempToTemp(const size_t extruder, const Tempera
     return std::max(0.0_s, time);
 }
 
-Temperature Preheat::getTemp(const size_t extruder, const Ratio& flow, const bool is_initial_layer)
+Temperature Preheat::getTemp(const size_t extruder, const bool is_initial_layer)
 {
-    const Settings& extruder_settings = Application::getInstance().current_slice->scene.extruders[extruder].settings;
+    const Settings& extruder_settings = Application::getInstance().current_slice_->scene.extruders[extruder].settings_;
     if (is_initial_layer && extruder_settings.get<Temperature>("material_print_temperature_layer_0") != 0)
     {
         return extruder_settings.get<Temperature>("material_print_temperature_layer_0");
     }
-    return extruder_settings.get<FlowTempGraph>("material_flow_temp_graph").getTemp(flow, extruder_settings.get<Temperature>("material_print_temperature"), extruder_settings.get<bool>("material_flow_dependent_temperature"));
+    return extruder_settings.get<Temperature>("material_print_temperature");
 }
 
 Preheat::WarmUpResult Preheat::getWarmUpPointAfterCoolDown(double time_window, unsigned int extruder, double temp_start, double temp_mid, double temp_end, bool during_printing)
 {
     WarmUpResult result;
-    const Settings& extruder_settings = Application::getInstance().current_slice->scene.extruders[extruder].settings;
+    const Settings& extruder_settings = Application::getInstance().current_slice_->scene.extruders[extruder].settings_;
     Temperature cool_down_speed = extruder_settings.get<Temperature>("machine_nozzle_cool_down_speed");
     if (during_printing)
     {
@@ -104,7 +106,7 @@ Preheat::WarmUpResult Preheat::getWarmUpPointAfterCoolDown(double time_window, u
         result.heating_time += time_to_heat_from_standby_to_print_temp;
         result.lowest_temperature = temp_mid;
     }
-    else 
+    else
     {
         result.heating_time += limited_time_window * time_to_heatup_1_degree / (time_to_cooldown_1_degree + time_to_heatup_1_degree);
         result.lowest_temperature = std::max(temp_mid, temp_end - result.heating_time / time_to_heatup_1_degree);
@@ -112,7 +114,7 @@ Preheat::WarmUpResult Preheat::getWarmUpPointAfterCoolDown(double time_window, u
 
     if (result.heating_time > time_window || result.heating_time < 0.0)
     {
-        logWarning("getWarmUpPointAfterCoolDown returns result outside of the time window!");
+        spdlog::warn("getWarmUpPointAfterCoolDown returns result outside of the time window!");
     }
     return result;
 }
@@ -120,7 +122,7 @@ Preheat::WarmUpResult Preheat::getWarmUpPointAfterCoolDown(double time_window, u
 Preheat::CoolDownResult Preheat::getCoolDownPointAfterWarmUp(double time_window, unsigned int extruder, double temp_start, double temp_mid, double temp_end, bool during_printing)
 {
     CoolDownResult result;
-    const Settings& extruder_settings = Application::getInstance().current_slice->scene.extruders[extruder].settings;
+    const Settings& extruder_settings = Application::getInstance().current_slice_->scene.extruders[extruder].settings_;
     Temperature cool_down_speed = extruder_settings.get<Temperature>("machine_nozzle_cool_down_speed");
     if (during_printing)
     {
@@ -176,7 +178,7 @@ Preheat::CoolDownResult Preheat::getCoolDownPointAfterWarmUp(double time_window,
         result.cooling_time += cool_down_time;
         result.highest_temperature = temp_mid;
     }
-    else 
+    else
     {
         result.cooling_time += limited_time_window * time_to_heatup_1_degree / (time_to_cooldown_1_degree + time_to_heatup_1_degree);
         result.highest_temperature = std::min(temp_mid, temp_end + result.cooling_time / time_to_cooldown_1_degree);
@@ -184,9 +186,9 @@ Preheat::CoolDownResult Preheat::getCoolDownPointAfterWarmUp(double time_window,
 
     if (result.cooling_time > time_window || result.cooling_time < 0.0)
     {
-        logWarning("getCoolDownPointAfterWarmUp returns result outside of the time window!");
+        spdlog::warn("getCoolDownPointAfterWarmUp returns result outside of the time window!");
     }
     return result;
 }
 
-}//namespace cura
+} // namespace cura

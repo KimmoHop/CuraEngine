@@ -1,9 +1,13 @@
-//Copyright (c) 2018 Ultimaker B.V.
-//CuraEngine is released under the terms of the AGPLv3 or higher.
+// Copyright (c) 2022 Ultimaker B.V.
+// CuraEngine is released under the terms of the AGPLv3 or higher
 
 #include "mesh.h"
-#include "utils/floatpoint.h"
-#include "utils/logoutput.h"
+
+#include <numbers>
+
+#include <spdlog/spdlog.h>
+
+#include "utils/Point3D.h"
 
 namespace cura
 {
@@ -13,114 +17,126 @@ const int vertex_meld_distance = MM2INT(0.03);
  * returns a hash for the location, but first divides by the vertex_meld_distance,
  * so that any point within a box of vertex_meld_distance by vertex_meld_distance would get mapped to the same hash.
  */
-static inline uint32_t pointHash(const Point3& p)
+static inline uint32_t pointHash(const Point3LL& p)
 {
-    return ((p.x + vertex_meld_distance/2) / vertex_meld_distance) ^ (((p.y + vertex_meld_distance/2) / vertex_meld_distance) << 10) ^ (((p.z + vertex_meld_distance/2) / vertex_meld_distance) << 20);
+    return ((p.x_ + vertex_meld_distance / 2) / vertex_meld_distance) ^ (((p.y_ + vertex_meld_distance / 2) / vertex_meld_distance) << 10)
+         ^ (((p.z_ + vertex_meld_distance / 2) / vertex_meld_distance) << 20);
 }
 
 Mesh::Mesh(Settings& parent)
-: settings(parent)
-, has_disconnected_faces(false)
-, has_overlapping_faces(false)
+    : settings_(parent)
+    , has_disconnected_faces(false)
+    , has_overlapping_faces(false)
 {
 }
 
 Mesh::Mesh()
-: settings()
-, has_disconnected_faces(false)
-, has_overlapping_faces(false)
+    : settings_()
+    , has_disconnected_faces(false)
+    , has_overlapping_faces(false)
 {
 }
 
-void Mesh::addFace(Point3& v0, Point3& v1, Point3& v2)
+void Mesh::addFace(Point3LL& v0, Point3LL& v1, Point3LL& v2)
 {
     int vi0 = findIndexOfVertex(v0);
     int vi1 = findIndexOfVertex(v1);
     int vi2 = findIndexOfVertex(v2);
-    if (vi0 == vi1 || vi1 == vi2 || vi0 == vi2) return; // the face has two vertices which get assigned the same location. Don't add the face.
+    if (vi0 == vi1 || vi1 == vi2 || vi0 == vi2)
+        return; // the face has two vertices which get assigned the same location. Don't add the face.
 
-    int idx = faces.size(); // index of face to be added
-    faces.emplace_back();
-    MeshFace& face = faces[idx];
-    face.vertex_index[0] = vi0;
-    face.vertex_index[1] = vi1;
-    face.vertex_index[2] = vi2;
-    vertices[face.vertex_index[0]].connected_faces.push_back(idx);
-    vertices[face.vertex_index[1]].connected_faces.push_back(idx);
-    vertices[face.vertex_index[2]].connected_faces.push_back(idx);
+    int idx = faces_.size(); // index of face to be added
+    faces_.emplace_back();
+    MeshFace& face = faces_[idx];
+    face.vertex_index_[0] = vi0;
+    face.vertex_index_[1] = vi1;
+    face.vertex_index_[2] = vi2;
+    vertices_[face.vertex_index_[0]].connected_faces_.push_back(idx);
+    vertices_[face.vertex_index_[1]].connected_faces_.push_back(idx);
+    vertices_[face.vertex_index_[2]].connected_faces_.push_back(idx);
 }
 
 void Mesh::clear()
 {
-    faces.clear();
-    vertices.clear();
-    vertex_hash_map.clear();
+    faces_.clear();
+    vertices_.clear();
+    vertex_hash_map_.clear();
 }
 
 void Mesh::finish()
 {
     // Finish up the mesh, clear the vertex_hash_map, as it's no longer needed from this point on and uses quite a bit of memory.
-    vertex_hash_map.clear();
+    vertex_hash_map_.clear();
 
     // For each face, store which other face is connected with it.
-    for(unsigned int i=0; i<faces.size(); i++)
+    for (unsigned int i = 0; i < faces_.size(); i++)
     {
-        MeshFace& face = faces[i];
+        MeshFace& face = faces_[i];
         // faces are connected via the outside
-        face.connected_face_index[0] = getFaceIdxWithPoints(face.vertex_index[0], face.vertex_index[1], i, face.vertex_index[2]);
-        face.connected_face_index[1] = getFaceIdxWithPoints(face.vertex_index[1], face.vertex_index[2], i, face.vertex_index[0]);
-        face.connected_face_index[2] = getFaceIdxWithPoints(face.vertex_index[2], face.vertex_index[0], i, face.vertex_index[1]);
+        face.connected_face_index_[0] = getFaceIdxWithPoints(face.vertex_index_[0], face.vertex_index_[1], i, face.vertex_index_[2]);
+        face.connected_face_index_[1] = getFaceIdxWithPoints(face.vertex_index_[1], face.vertex_index_[2], i, face.vertex_index_[0]);
+        face.connected_face_index_[2] = getFaceIdxWithPoints(face.vertex_index_[2], face.vertex_index_[0], i, face.vertex_index_[1]);
     }
 }
 
-Point3 Mesh::min() const
+Point3LL Mesh::min() const
 {
-    return aabb.min;
+    return aabb_.min_;
 }
-Point3 Mesh::max() const
+Point3LL Mesh::max() const
 {
-    return aabb.max;
+    return aabb_.max_;
 }
 AABB3D Mesh::getAABB() const
 {
-    return aabb;
+    return aabb_;
 }
 void Mesh::expandXY(int64_t offset)
 {
     if (offset)
     {
-        aabb.expandXY(offset);
+        aabb_.expandXY(offset);
     }
 }
 
-void Mesh::transform(const FMatrix4x3& transformation)
+void Mesh::transform(const Matrix4x3D& transformation)
 {
-    for(MeshVertex& v : vertices)
+    for (MeshVertex& v : vertices_)
     {
-        v.p = transformation.apply(v.p);
+        v.p_ = transformation.apply(v.p_);
     }
-    aabb.min = transformation.apply(aabb.min);
-    aabb.max = transformation.apply(aabb.max);
+    aabb_.min_ = transformation.apply(aabb_.min_);
+    aabb_.max_ = transformation.apply(aabb_.max_);
 }
 
 
-int Mesh::findIndexOfVertex(const Point3& v)
+bool Mesh::isPrinted() const
+{
+    return ! settings_.get<bool>("infill_mesh") && ! settings_.get<bool>("cutting_mesh") && ! settings_.get<bool>("anti_overhang_mesh");
+}
+
+bool Mesh::canInterlock() const
+{
+    return ! settings_.get<bool>("infill_mesh") && ! settings_.get<bool>("anti_overhang_mesh");
+}
+
+int Mesh::findIndexOfVertex(const Point3LL& v)
 {
     uint32_t hash = pointHash(v);
 
-    for(unsigned int idx = 0; idx < vertex_hash_map[hash].size(); idx++)
+    for (unsigned int idx = 0; idx < vertex_hash_map_[hash].size(); idx++)
     {
-        if ((vertices[vertex_hash_map[hash][idx]].p - v).testLength(vertex_meld_distance))
+        if ((vertices_[vertex_hash_map_[hash][idx]].p_ - v).testLength(vertex_meld_distance))
         {
-            return vertex_hash_map[hash][idx];
+            return vertex_hash_map_[hash][idx];
         }
     }
-    vertex_hash_map[hash].push_back(vertices.size());
-    vertices.emplace_back(v);
-    
-    aabb.include(v);
-    
-    return vertices.size() - 1;
+    vertex_hash_map_[hash].push_back(vertices_.size());
+    vertices_.emplace_back(v);
+
+    aabb_.include(v);
+
+    return vertices_.size() - 1;
 }
 
 /*!
@@ -150,52 +166,55 @@ See <a href="http://stackoverflow.com/questions/14066933/direct-way-of-computing
 int Mesh::getFaceIdxWithPoints(int idx0, int idx1, int notFaceIdx, int notFaceVertexIdx) const
 {
     std::vector<int> candidateFaces; // in case more than two faces meet at an edge, multiple candidates are generated
-    for(int f : vertices[idx0].connected_faces) // search through all faces connected to the first vertex and find those that are also connected to the second
+    for (int f : vertices_[idx0].connected_faces_) // search through all faces connected to the first vertex and find those that are also connected to the second
     {
         if (f == notFaceIdx)
         {
             continue;
         }
-        if ( faces[f].vertex_index[0] == idx1 // && faces[f].vertex_index[1] == idx0 // next face should have the right direction!
-          || faces[f].vertex_index[1] == idx1 // && faces[f].vertex_index[2] == idx0
-          || faces[f].vertex_index[2] == idx1 // && faces[f].vertex_index[0] == idx0
-            )  candidateFaces.push_back(f);
-
+        if (faces_[f].vertex_index_[0] == idx1 // && faces[f].vertex_index[1] == idx0 // next face should have the right direction!
+            || faces_[f].vertex_index_[1] == idx1 // && faces[f].vertex_index[2] == idx0
+            || faces_[f].vertex_index_[2] == idx1 // && faces[f].vertex_index[0] == idx0
+        )
+            candidateFaces.push_back(f);
     }
 
     if (candidateFaces.size() == 0)
     {
-        cura::logDebug("Couldn't find face connected to face %i.\n", notFaceIdx);
-        if (!has_disconnected_faces)
+        spdlog::debug("Couldn't find face connected to face {}", notFaceIdx);
+        if (! has_disconnected_faces)
         {
-            cura::logWarning("Mesh has disconnected faces!\n");
+            spdlog::warn("Mesh has disconnected faces!");
         }
         has_disconnected_faces = true;
         return -1;
     }
-    if (candidateFaces.size() == 1) { return candidateFaces[0]; }
+    if (candidateFaces.size() == 1)
+    {
+        return candidateFaces[0];
+    }
 
 
     if (candidateFaces.size() % 2 == 0)
     {
-        cura::logDebug("Warning! Edge with uneven number of faces connecting it!(%i)\n", candidateFaces.size()+1);
-        if (!has_disconnected_faces)
+        spdlog::debug("Edge with uneven number of faces connecting it!({})\n", candidateFaces.size() + 1);
+        if (! has_disconnected_faces)
         {
-            cura::logWarning("Mesh has disconnected faces!\n");
+            spdlog::warn("Mesh has disconnected faces!");
         }
         has_disconnected_faces = true;
     }
 
-    FPoint3 vn = vertices[idx1].p - vertices[idx0].p;
-    FPoint3 n = vn / vn.vSize(); // the normal of the plane in which all normals of faces connected to the edge lie => the normalized normal
-    FPoint3 v0 = vertices[idx1].p - vertices[idx0].p;
+    Point3D vn = vertices_[idx1].p_ - vertices_[idx0].p_;
+    Point3D n = vn / vn.vSize(); // the normal of the plane in which all normals of faces connected to the edge lie => the normalized normal
+    Point3D v0 = vertices_[idx1].p_ - vertices_[idx0].p_;
 
-// the normals below are abnormally directed! : these normals all point counterclockwise (viewed from idx1 to idx0) from the face, irrespective of the direction of the face.
-    FPoint3 n0 = FPoint3(vertices[notFaceVertexIdx].p - vertices[idx0].p).cross(v0);
+    // the normals below are abnormally directed! : these normals all point counterclockwise (viewed from idx1 to idx0) from the face, irrespective of the direction of the face.
+    Point3D n0 = Point3D(vertices_[notFaceVertexIdx].p_ - vertices_[idx0].p_).cross(v0);
 
     if (n0.vSize() <= 0)
     {
-        cura::logDebug("Face %i has zero area!", notFaceIdx);
+        spdlog::debug("Face {} has zero area!", notFaceIdx);
     }
 
     double smallestAngle = 1000; // more then 2 PI (impossible angle)
@@ -204,26 +223,27 @@ int Mesh::getFaceIdxWithPoints(int idx0, int idx1, int notFaceIdx, int notFaceVe
     for (int candidateFace : candidateFaces)
     {
         int candidateVertex;
-        {// find third vertex belonging to the face (besides idx0 and idx1)
-            for (candidateVertex = 0; candidateVertex<3; candidateVertex++)
-                if (faces[candidateFace].vertex_index[candidateVertex] != idx0 && faces[candidateFace].vertex_index[candidateVertex] != idx1)
+        { // find third vertex belonging to the face (besides idx0 and idx1)
+            for (candidateVertex = 0; candidateVertex < 3; candidateVertex++)
+                if (faces_[candidateFace].vertex_index_[candidateVertex] != idx0 && faces_[candidateFace].vertex_index_[candidateVertex] != idx1)
                     break;
         }
 
-        FPoint3 v1 = vertices[faces[candidateFace].vertex_index[candidateVertex]].p - vertices[idx0].p;
-        FPoint3 n1 = v0.cross(v1);
+        Point3D v1 = vertices_[faces_[candidateFace].vertex_index_[candidateVertex]].p_ - vertices_[idx0].p_;
+        Point3D n1 = v0.cross(v1);
 
         double dot = n0 * n1;
         double det = n * n0.cross(n1);
         double angle = std::atan2(det, dot);
-        if (angle < 0) angle += 2*M_PI; // 0 <= angle < 2* M_PI
+        if (angle < 0)
+            angle += 2 * std::numbers::pi; // 0 <= angle < 2* std::numbers::pi
 
         if (angle == 0)
         {
-            cura::logDebug("Overlapping faces: face %i and face %i.\n", notFaceIdx, candidateFace);
-            if (!has_overlapping_faces)
+            spdlog::debug("Overlapping faces: face {} and face {}.", notFaceIdx, candidateFace);
+            if (! has_overlapping_faces)
             {
-                cura::logWarning("Mesh has overlapping faces!\n");
+                spdlog::warn("Mesh has overlapping faces!");
             }
             has_overlapping_faces = true;
         }
@@ -235,14 +255,14 @@ int Mesh::getFaceIdxWithPoints(int idx0, int idx1, int notFaceIdx, int notFaceVe
     }
     if (bestIdx < 0)
     {
-        cura::logDebug("Couldn't find face connected to face %i.\n", notFaceIdx);
-        if (!has_disconnected_faces)
+        spdlog::debug("Couldn't find face connected to face {}.", notFaceIdx);
+        if (! has_disconnected_faces)
         {
-            cura::logWarning("Mesh has disconnected faces!\n");
+            spdlog::warn("Mesh has disconnected faces!");
         }
         has_disconnected_faces = true;
     }
     return bestIdx;
 }
 
-}//namespace cura
+} // namespace cura

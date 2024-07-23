@@ -1,15 +1,21 @@
-//Copyright (c) 2019 Ultimaker B.V.
-//CuraEngine is released under the terms of the AGPLv3 or higher.
+// Copyright (c) 2024 UltiMaker
+// CuraEngine is released under the terms of the AGPLv3 or higher.
 
 #include <google/protobuf/message.h>
+#include <memory>
+#include <numbers>
+
 #include <gtest/gtest.h>
 
+#include "FffProcessor.h"
 #include "MockSocket.h" //To mock out the communication with the front-end.
-#include "../src/FffProcessor.h"
-#include "../src/communication/ArcusCommunicationPrivate.h" //To access the private fields of this communication class.
-#include "../src/settings/types/LayerIndex.h"
-#include "../src/utils/polygon.h" //Create test shapes to send over the socket.
+#include "communication/ArcusCommunicationPrivate.h" //To access the private fields of this communication class.
+#include "geometry/Polygon.h" //Create test shapes to send over the socket.
+#include "geometry/Shape.h"
+#include "settings/types/LayerIndex.h"
+#include "utils/Coord_t.h"
 
+// NOLINTBEGIN(*-magic-numbers)
 namespace cura
 {
 
@@ -21,7 +27,6 @@ class ArcusCommunicationTest : public testing::Test
 {
 public:
     std::string ip;
-    uint16_t port;
     MockSocket* socket;
     ArcusCommunication* ac;
 
@@ -32,12 +37,11 @@ public:
     Polygon test_circle;
     Polygon test_convex_shape;
 
-    Polygons test_shapes; // all above polygons
+    Shape test_shapes; // all above polygons
 
-    void SetUp()
+    void SetUp() override
     {
         ip = "0.0.0.0";
-        port = 12345;
         socket = new MockSocket();
         ac = new ArcusCommunication();
         ac->setSocketMock(socket);
@@ -47,24 +51,24 @@ public:
         test_square.emplace_back(1000, 0);
         test_square.emplace_back(1000, 1000);
         test_square.emplace_back(0, 1000);
-        test_shapes.add(test_square);
+        test_shapes.push_back(test_square);
 
         test_square2.emplace_back(1100, 1500);
         test_square2.emplace_back(2000, 1500);
         test_square2.emplace_back(2000, -500);
         test_square2.emplace_back(1100, -500);
-        test_shapes.add(test_square2);
+        test_shapes.push_back(test_square2);
 
         test_triangle.emplace_back(0, 2100);
         test_triangle.emplace_back(500, 1100);
         test_triangle.emplace_back(1500, 2100);
-        test_shapes.add(test_triangle);
+        test_shapes.push_back(test_triangle);
 
         for (double a = 0; a < 1.0; a += .05)
         {
-            test_circle.add(Point(2050, 2050) + Point(std::cos(a * 2 * M_PI)*500, std::sin(a * 2 * M_PI)*500));
+            test_circle.push_back(Point2LL(2050, 2050) + Point2LL(std::cos(a * 2 * std::numbers::pi) * 500, std::sin(a * 2 * std::numbers::pi) * 500));
         }
-        test_shapes.add(test_circle);
+        test_shapes.push_back(test_circle);
 
         test_convex_shape.emplace_back(-300, 0);
         test_convex_shape.emplace_back(-100, 500);
@@ -75,10 +79,10 @@ public:
         test_convex_shape.emplace_back(-1500, 1500);
         test_convex_shape.emplace_back(-1600, 1100);
         test_convex_shape.emplace_back(-700, 200);
-        test_shapes.add(test_convex_shape);
+        test_shapes.push_back(test_convex_shape);
     }
 
-    void TearDown()
+    void TearDown() override
     {
         delete ac;
         ac = nullptr;
@@ -87,16 +91,17 @@ public:
 
 TEST_F(ArcusCommunicationTest, FlushGCodeTest)
 {
-    //Before there is g-code, no messages should be sent if we were to flush.
+    // Before there is g-code, no messages should be sent if we were to flush.
     ac->flushGCode();
     ASSERT_TRUE(socket->sent_messages.empty());
 
-    //Input some 'g-code' to flush.
+    // Input some 'g-code' to flush.
+    // Multi-line to see flushing behaviour.
     const std::string test_gcode = "This Fibonacci joke is as bad as the last two you heard combined.\n"
-                                   "It's pretty cool how the Chinese made a language entirely out of tattoos."; //Multi-line to see flushing behaviour.
+                                   "It's pretty cool how the Chinese made a language entirely out of tattoos.";
     ac->private_data->gcode_output_stream.write(test_gcode.c_str(), test_gcode.size());
 
-    //Call the function we're testing. This time it should give us a message.
+    // Call the function we're testing. This time it should give us a message.
     ac->flushGCode();
 
     ASSERT_EQ(size_t(1), socket->sent_messages.size());
@@ -124,7 +129,7 @@ TEST_F(ArcusCommunicationTest, SendGCodePrefix)
     ac->flushGCode();
     EXPECT_GT(socket->sent_messages.size(), 0);
     bool found_prefix = false;
-    for (auto message : socket->sent_messages)
+    for (const auto& message : socket->sent_messages)
     {
         if (message->DebugString().find(prefix) != std::string::npos)
         {
@@ -155,11 +160,11 @@ TEST_F(ArcusCommunicationTest, SendLayerComplete)
 
 TEST_F(ArcusCommunicationTest, SendProgress)
 {
-    ac->private_data->object_count = 2; //If there are two objects, all progress should get halved.
+    ac->private_data->object_count = 2; // If there are two objects, all progress should get halved.
 
     ac->sendProgress(10);
     ASSERT_EQ(size_t(1), socket->sent_messages.size());
-    proto::Progress* message = dynamic_cast<proto::Progress*>(socket->sent_messages.back().get());
+    auto* message = dynamic_cast<proto::Progress*>(socket->sent_messages.back().get());
     EXPECT_EQ(float(5), message->amount());
 
     ac->sendProgress(50);
@@ -168,4 +173,5 @@ TEST_F(ArcusCommunicationTest, SendProgress)
     EXPECT_EQ(float(25), message->amount());
 }
 
-}
+} // namespace cura
+// NOLINTEND(*-magic-numbers)

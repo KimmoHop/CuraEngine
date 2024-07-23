@@ -1,35 +1,38 @@
-#include "ListPolyIt.h"
+// Copyright (c) 2022 Ultimaker B.V.
+// CuraEngine is released under the terms of the AGPLv3 or higher.
+
+#include "utils/ListPolyIt.h"
 
 #include <cmath> // isfinite
 #include <sstream> // ostream
 
-#include "AABB.h" // for debug output svg html
-#include "SVG.h"
+#include "geometry/Polygon.h"
+#include "utils/AABB.h" // for debug output svg html
+#include "utils/SVG.h"
 
-namespace cura 
+namespace cura
 {
 
 
-void ListPolyIt::convertPolygonsToLists(const Polygons& polys, ListPolygons& result)
+void ListPolyIt::convertPolygonsToLists(const Shape& shape, ListPolygons& result)
 {
-    for (ConstPolygonRef poly : polys)
+    for (const Polygon& poly : shape)
     {
         result.emplace_back();
         convertPolygonToList(poly, result.back());
     }
 }
 
-void ListPolyIt::convertPolygonToList(ConstPolygonRef poly, ListPolygon& result)
+void ListPolyIt::convertPolygonToList(const Polygon& poly, ListPolygon& result)
 {
 #ifdef DEBUG
-    Point last = poly.back();
+    Point2LL last = poly.back();
 #endif // DEBUG
-    for (const Point& p : poly)
+    for (const Point2LL& p : poly)
     {
         result.push_back(p);
 #ifdef DEBUG
-        // usually polygons shouldn't have such degenerate verts
-        // in PolygonProximityLinker (where this function is (also) used) it is
+        // usually polygons shouldn't have such degenerate verts. It is
         // required to not have degenerate verts, because verts are mapped
         // to links, but if two different verts are at the same place the mapping fails.
         assert(p != last);
@@ -39,7 +42,7 @@ void ListPolyIt::convertPolygonToList(ConstPolygonRef poly, ListPolygon& result)
 }
 
 
-void ListPolyIt::convertListPolygonsToPolygons(const ListPolygons& list_polygons, Polygons& polygons)
+void ListPolyIt::convertListPolygonsToPolygons(const ListPolygons& list_polygons, Shape& polygons)
 {
     for (unsigned int poly_idx = 0; poly_idx < polygons.size(); poly_idx++)
     {
@@ -48,15 +51,15 @@ void ListPolyIt::convertListPolygonsToPolygons(const ListPolygons& list_polygons
     }
 }
 
-void ListPolyIt::convertListPolygonToPolygon(const ListPolygon& list_polygon, PolygonRef polygon)
+void ListPolyIt::convertListPolygonToPolygon(const ListPolygon& list_polygon, Polygon& polygon)
 {
-    for (const Point& p : list_polygon)
+    for (const Point2LL& p : list_polygon)
     {
-        polygon.add(p);
+        polygon.push_back(p);
     }
 }
 
-ListPolyIt ListPolyIt::insertPointNonDuplicate(const ListPolyIt before, const ListPolyIt after, const Point to_insert)
+ListPolyIt ListPolyIt::insertPointNonDuplicate(const ListPolyIt before, const ListPolyIt after, const Point2LL to_insert)
 {
     if (to_insert == before.p())
     {
@@ -68,11 +71,10 @@ ListPolyIt ListPolyIt::insertPointNonDuplicate(const ListPolyIt before, const Li
     }
     else
     {
-        ListPolygon& poly = *after.poly;
-        return ListPolyIt(poly, poly.insert(after.it, to_insert));
+        ListPolygon& poly = *after.poly_;
+        return ListPolyIt(poly, poly.insert(after.it_, to_insert));
     }
 }
 
 
-
-}//namespace cura 
+} // namespace cura
